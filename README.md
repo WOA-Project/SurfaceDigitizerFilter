@@ -1,0 +1,1 @@
+# Surface Digitizer Filter driver for Surface Duo 2 "D6" Digitizer
