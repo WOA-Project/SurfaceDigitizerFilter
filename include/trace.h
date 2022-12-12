@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation. All Rights Reserved.
-// Copyright (c) DuoWoA authors. All Rights Reserved. 
+// Copyright (c) DuoWoA authors. All Rights Reserved.
 
 #pragma once
 
@@ -40,7 +40,7 @@
 #define WPP_LEVEL_FLAGS_ENABLED(lvl, flags) \
            (WPP_LEVEL_ENABLED(flags) && WPP_CONTROL(WPP_BIT_ ## flags).Level >= lvl)
 
-//           
+//
 // WPP orders static parameters before dynamic parameters. To support the Trace function
 // defined below which sets FLAGS=MYDRIVER_ALL_INFO, a custom macro must be defined to
 // reorder the arguments to what the .tpl configuration file expects.

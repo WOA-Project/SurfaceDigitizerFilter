@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation. All Rights Reserved.
-// Copyright (c) DuoWoA authors. All Rights Reserved. 
+// Copyright (c) DuoWoA authors. All Rights Reserved.
 
 #pragma once
 
@@ -11,11 +11,7 @@
 #include <hidport.h>
 #include <trace.h>
 
-typedef struct _DEVICE_EXTENSION
-{
-    WDFDEVICE WdfDevice;
-} DEVICE_EXTENSION, *PDEVICE_EXTENSION;
-
+#define HID_DESCRIPTOR_POOL_TAG 'DdiH'
 
 DRIVER_INITIALIZE DriverEntry;
 
@@ -25,4 +21,4 @@ EVT_WDF_DRIVER_DEVICE_ADD OnDeviceAdd;
 
 EVT_WDF_IO_QUEUE_IO_INTERNAL_DEVICE_CONTROL OnInternalDeviceControl;
 
-WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_EXTENSION, GetDeviceContext)
+EVT_WDF_REQUEST_COMPLETION_ROUTINE OnRequestCompletionRoutine;
