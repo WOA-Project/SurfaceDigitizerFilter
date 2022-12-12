@@ -351,8 +351,8 @@ Return Value:
 
 --*/
 {
-    WDFMEMORY   memory = CompletionParams->Parameters.Ioctl.Output.Buffer;
-    NTSTATUS    status = CompletionParams->IoStatus.Status;
+    WDFMEMORY   memory = Params->Parameters.Ioctl.Output.Buffer;
+    NTSTATUS    status = Params->IoStatus.Status;
 
     ULONG reportDescriptorLength = 0;
     PUCHAR reportDescriptor = NULL;
@@ -363,10 +363,10 @@ Return Value:
     UNREFERENCED_PARAMETER(Context);
 
     if (NT_SUCCESS(status) &&
-        CompletionParams->Type == WdfRequestTypeDeviceControlInternal &&
-        CompletionParams->Parameters.Ioctl.IoControlCode == IOCTL_HID_GET_REPORT_DESCRIPTOR) {
+        Params->Type == WdfRequestTypeDeviceControlInternal &&
+        Params->Parameters.Ioctl.IoControlCode == IOCTL_HID_GET_REPORT_DESCRIPTOR) {
 
-        reportDescriptorLength = (ULONG)CompletionParams->Parameters.Ioctl.Output.Length;
+        reportDescriptorLength = (ULONG)Params->Parameters.Ioctl.Output.Length;
 
         reportDescriptor = (PUCHAR)ExAllocatePoolWithTag(
             NonPagedPoolNx,
@@ -385,7 +385,7 @@ Return Value:
 
         status = WdfMemoryCopyToBuffer(
             memory,
-            CompletionParams->Parameters.Ioctl.Output.Offset,
+            Params->Parameters.Ioctl.Output.Offset,
             reportDescriptor,
             reportDescriptorLength);
 
