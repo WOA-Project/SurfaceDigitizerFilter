@@ -9,7 +9,6 @@
 #pragma alloc_text (PAGE, OnDeviceAdd)
 #pragma alloc_text (PAGE, OnInternalDeviceControl)
 #pragma alloc_text (PAGE, OnContextCleanup)
-#pragma alloc_text (PAGE, OnRequestCompletionRoutine)
 #endif
 
 NTSTATUS
@@ -39,7 +38,6 @@ Return Value:
     WDF_OBJECT_ATTRIBUTES attributes;
     WDF_DRIVER_CONFIG config;
     NTSTATUS status;
-    WDFDRIVER hDriver;
 
     //
     // Initialize tracing via WPP
@@ -59,7 +57,7 @@ Return Value:
         RegistryPath,
         &attributes,
         &config,
-        &hDriver
+        WDF_NO_HANDLE
     );
 
     if (!NT_SUCCESS(status))
@@ -72,12 +70,10 @@ Return Value:
 
         WPP_CLEANUP(DriverObject);
 
-        goto exit;
+        return status;
     }
 
-exit:
-
-    return status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -133,7 +129,7 @@ Return Value:
             "WdfDeviceCreate failed - 0x%08lX",
             status);
 
-        goto exit;
+        return status;
     }
 
     //
@@ -159,12 +155,10 @@ Return Value:
             "Error creating WDF default queue - 0x%08lX",
             status);
 
-        goto exit;
+        return status;
     }
 
-exit:
-
-    return status;
+    return STATUS_SUCCESS;
 }
 
 VOID
@@ -203,7 +197,6 @@ Return Value:
 {
     NTSTATUS status;
     WDFDEVICE device;
-    BOOLEAN forwardWithCompletionRoutine = FALSE;
     BOOLEAN requestSent = TRUE;
     WDF_REQUEST_SEND_OPTIONS options;
     WDFMEMORY memory;
@@ -226,25 +219,18 @@ Return Value:
     // use retreive function or escape to WDM to get the UserBuffer.
     //
 
-    switch (IoControlCode) {
-
-    case IOCTL_HID_GET_REPORT_DESCRIPTOR:
-        //
-        // Obtains the report descriptor for the HID device
-        //
-        forwardWithCompletionRoutine = TRUE;
-        break;
-
-    default:
-        break;
-    }
-
     //
     // Forward the request down. WdfDeviceGetIoTarget returns
     // the default target, which represents the device attached to us below in
     // the stack.
     //
-    if (forwardWithCompletionRoutine) {
+
+    //
+    // Obtains the report descriptor for the HID device
+    //
+    if (IoControlCode ==
+        IOCTL_HID_GET_REPORT_DESCRIPTOR)
+    {
         //
         // Format the request with the output memory so the completion routine
         // can access the return data in order to cache it into the context area
@@ -324,6 +310,8 @@ Return Value:
     return;
 }
 
+#define MAX_HID_REPORT_DESCRIPTOR_SIZE 4096
+
 VOID
 OnRequestCompletionRoutine (
     IN WDFREQUEST  Request,
@@ -351,99 +339,140 @@ Return Value:
 
 --*/
 {
-    WDFMEMORY   memory = Params->Parameters.Ioctl.Output.Buffer;
+    WDFMEMORY memory = NULL;
     NTSTATUS    status = Params->IoStatus.Status;
 
     ULONG reportDescriptorLength = 0;
     PUCHAR reportDescriptor = NULL;
     ULONG i = 0;
-    UCHAR b1, b2, b3, b4, b5, b6 = 0;
 
     UNREFERENCED_PARAMETER(Target);
     UNREFERENCED_PARAMETER(Context);
 
-    if (NT_SUCCESS(status) &&
-        Params->Type == WdfRequestTypeDeviceControlInternal &&
-        Params->Parameters.Ioctl.IoControlCode == IOCTL_HID_GET_REPORT_DESCRIPTOR) {
+    if (!NT_SUCCESS(status))
+    {
+        goto exit;
+    }
 
-        reportDescriptorLength = (ULONG)Params->Parameters.Ioctl.Output.Length;
+    if (Params->Type != WdfRequestTypeDeviceControlInternal)
+    {
+        goto exit;
+    }
 
-        reportDescriptor = (PUCHAR)ExAllocatePoolWithTag(
-            NonPagedPoolNx,
-            reportDescriptorLength,
-            HID_DESCRIPTOR_POOL_TAG);
+    NT_ASSERT(
+        Params->Parameters.Ioctl.IoControlCode ==
+        IOCTL_HID_GET_REPORT_DESCRIPTOR);
 
-        if (NULL == reportDescriptor) {
-            Trace(
-                TRACE_LEVEL_ERROR,
-                TRACE_INIT,
-                "Could not allocate report descriptor buffer!");
+    if (Params->Parameters.Ioctl.IoControlCode !=
+        IOCTL_HID_GET_REPORT_DESCRIPTOR)
+    {
+        goto exit;
+    }
 
-            status = STATUS_UNSUCCESSFUL;
-            goto exit;
-        }
+    memory = Params->Parameters.Ioctl.Output.Buffer;
 
-        status = WdfMemoryCopyToBuffer(
+    if (memory == NULL)
+    {
+        status = STATUS_INVALID_PARAMETER;
+        goto exit;
+    }
+
+    reportDescriptorLength = (ULONG)Params->Parameters.Ioctl.Output.Length;
+
+    NT_ASSERT(reportDescriptorLength <= MAX_HID_REPORT_DESCRIPTOR_SIZE);
+
+    if (reportDescriptorLength == 0 ||
+        reportDescriptorLength > MAX_HID_REPORT_DESCRIPTOR_SIZE)
+    {
+        status = STATUS_INVALID_BUFFER_SIZE;
+        goto exit;
+    }
+
+    size_t bufferSize;
+    if (WdfMemoryGetBuffer(
             memory,
-            Params->Parameters.Ioctl.Output.Offset,
-            reportDescriptor,
-            reportDescriptorLength);
+            &bufferSize) == NULL)
+    {
+        status = STATUS_INVALID_PARAMETER;
+        goto exit;
+    }
 
-        if (!NT_SUCCESS(status)) {
-            Trace(
-                TRACE_LEVEL_ERROR,
-                TRACE_INIT,
-                "WdfMemoryCopyToBuffer failed: 0x%x\n",
-                status);
+    NT_ASSERT(bufferSize >= reportDescriptorLength);
 
-            status = STATUS_UNSUCCESSFUL;
-            goto free_buffer;
+    if (reportDescriptorLength > bufferSize)
+    {
+        status = STATUS_BUFFER_TOO_SMALL;
+        goto exit;
+    }
+
+    reportDescriptor = (PUCHAR)ExAllocatePoolWithTag(
+        NonPagedPoolNx,
+        reportDescriptorLength,
+        HID_DESCRIPTOR_POOL_TAG);
+
+    if (NULL == reportDescriptor) {
+        Trace(
+            TRACE_LEVEL_ERROR,
+            TRACE_INIT,
+            "Could not allocate report descriptor buffer!");
+
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        goto exit;
+    }
+
+    status = WdfMemoryCopyToBuffer(
+        memory,
+        Params->Parameters.Ioctl.Output.Offset,
+        reportDescriptor,
+        reportDescriptorLength);
+
+    if (!NT_SUCCESS(status)) {
+        Trace(
+            TRACE_LEVEL_ERROR,
+            TRACE_INIT,
+            "WdfMemoryCopyToBuffer failed: 0x%x",
+            status);
+
+        goto free_buffer;
+    }
+
+    for (i = 0; (i + 5) < reportDescriptorLength; i++) {
+        if (reportDescriptor[i + 0] == 0x09 &&
+            reportDescriptor[i + 1] == 0x3B &&
+            reportDescriptor[i + 2] == 0x75 &&
+            reportDescriptor[i + 3] == 0x01 &&
+            reportDescriptor[i + 4] == 0x95 &&
+            reportDescriptor[i + 5] == 0x01)
+        {
+            reportDescriptor[i + 5] = 0x06;
+            break;
         }
+    }
 
-        for (i = 0; i < reportDescriptorLength - 5; i++) {
-            b1 = *(reportDescriptor + i);
-            b2 = *(reportDescriptor + i + 1);
-            b3 = *(reportDescriptor + i + 2);
-            b4 = *(reportDescriptor + i + 3);
-            b5 = *(reportDescriptor + i + 4);
-            b6 = *(reportDescriptor + i + 5);
+    status = WdfMemoryCopyFromBuffer(
+        memory,
+        0,
+        (PVOID)reportDescriptor,
+        reportDescriptorLength
+    );
 
-            // Fix HID descriptor bad alignment problem
+    if (!NT_SUCCESS(status)) {
+        Trace(
+            TRACE_LEVEL_ERROR,
+            TRACE_INIT,
+            "WdfMemoryCopyFromBuffer failed: 0x%x",
+            status);
 
-            // 0x09, 0x3B,        //     Usage (0x3B)
-            // //0x75, 0x01,        //     Report Size (1)
-            // //0x95, 0x01,        //     Report Count (1)
-            // 0x75, 0x01,        //     Report Size (1)
-            // 0x95, 0x06,        //     Report Count (6)
-
-            if (b1 == 0x09 && b2 == 0x3B && 
-                b3 == 0x75 && b4 == 0x01 && 
-                b5 == 0x95 && b6 == 0x01) {
-                *(reportDescriptor + i + 5) = 0x06; // Report Count (6)
-                break;
-            }
-        }
-
-        status = WdfMemoryCopyFromBuffer(
-            memory,
-            0,
-            (PVOID)reportDescriptor,
-            reportDescriptorLength
-        );
-
-        if (!NT_SUCCESS(status)) {
-            Trace(
-                TRACE_LEVEL_ERROR,
-                TRACE_INIT,
-                "WdfMemoryCopyFromBuffer failed: 0x%x\n",
-                status);
-
-            status = STATUS_UNSUCCESSFUL;
-            goto free_buffer;
-        }
+        goto free_buffer;
+    }
 
 free_buffer:
-        ExFreePoolWithTag(reportDescriptor, HID_DESCRIPTOR_POOL_TAG);
+
+    if (reportDescriptor != NULL)
+    {
+        ExFreePoolWithTag(
+            reportDescriptor,
+            HID_DESCRIPTOR_POOL_TAG);
     }
 
 exit:
